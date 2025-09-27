@@ -11,6 +11,8 @@ using UnityEngine.Events;
 using static Il2CppSystem.DateTimeParse;
 using DS = Il2CppInterop.Runtime.DelegateSupport;
 using LinceWorks;
+using Il2CppInterop.Runtime.Injection;
+using TriangleNet;
 
 namespace CratesAragamiMod
 {
@@ -18,29 +20,34 @@ namespace CratesAragamiMod
     public class Plugin : BasePlugin
     {
         internal static new ManualLogSource Log;
-        private UnityAction<Scene, LoadSceneMode> _onLoaded; // keep a ref so it doesn't get GC'd
-        private static bool _sawTitle, _sawGlobal, _queued;
+        private UnityAction<Scene, LoadSceneMode> _onLoaded;
 
         public override void Load()
         {
             Log = base.Log;
             Log.LogInfo("CratesAragamiMod Started");
 
-            // Create and apply Harmony patches
-            var harmony = new Harmony("your.id.aragami2.skipintro");
-            harmony.PatchAll();
+            //// Create and apply Harmony patches
+            //var harmony = new Harmony("your.id.aragami2.skipintro");
+            //harmony.PatchAll();
 
             _onLoaded = DS.ConvertDelegate<UnityAction<Scene, LoadSceneMode>>(
-           new Action<Scene, LoadSceneMode>(OnSceneLoaded));
+          new Action<Scene, LoadSceneMode>(OnSceneLoaded));
 
             SceneManager.add_sceneLoaded(_onLoaded);
+            Log.LogInfo("SkipIntro armed: will jump to CharacterSelect once GlobalScene is loaded.");
 
         }
-
         private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
-            Log.LogInfo($"Scene loaded: {scene.name} ({mode})");
+            if (scene.name == "GlobalScene")
+            {
+                Log.LogInfo("GlobalScene detected - loading CharacterSelect now.");
+                SceneManager.LoadScene("_Aragami2/Scenes/UI/CharacterSelect", LoadSceneMode.Single);
+            }
         }
 
     }
+
+   
 }
