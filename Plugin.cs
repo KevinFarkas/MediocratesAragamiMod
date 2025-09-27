@@ -3,9 +3,14 @@ using BepInEx.Unity.IL2CPP;
 using UnityEngine;
 using UnityEngine.SceneManagement;
 using BepInEx.Logging;
+using System;
 using HarmonyLib;
 using UnityEngine.Video;
 using Il2CppInterop.Runtime;
+using UnityEngine.Events;
+using static Il2CppSystem.DateTimeParse;
+using DS = Il2CppInterop.Runtime.DelegateSupport;
+using LinceWorks;
 
 namespace CratesAragamiMod
 {
@@ -13,22 +18,28 @@ namespace CratesAragamiMod
     public class Plugin : BasePlugin
     {
         internal static new ManualLogSource Log;
+        private UnityAction<Scene, LoadSceneMode> _onLoaded; // keep a ref so it doesn't get GC'd
+        private static bool _sawTitle, _sawGlobal, _queued;
 
         public override void Load()
         {
             Log = base.Log;
             Log.LogInfo("CratesAragamiMod Started");
 
-            var harmony = new Harmony("com.yourname.aragami2.scenelogger");
-            harmony.Patch(
-                original: AccessTools.Method(typeof(SceneManager), "Internal_SceneLoaded"),
-                prefix: new HarmonyMethod(typeof(Plugin), nameof(Prefix))
-            );
+            // Create and apply Harmony patches
+            var harmony = new Harmony("your.id.aragami2.skipintro");
+            harmony.PatchAll();
+
+            _onLoaded = DS.ConvertDelegate<UnityAction<Scene, LoadSceneMode>>(
+           new Action<Scene, LoadSceneMode>(OnSceneLoaded));
+
+            SceneManager.add_sceneLoaded(_onLoaded);
+
         }
-        // This prefix runs whenever Unity finishes loading a scene
-        public static void Prefix(Scene scene, UnityEngine.SceneManagement.LoadSceneMode mode)
+
+        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
         {
-            Log.LogInfo($"[Harmony] Scene loaded: {scene.name} | Mode: {mode}");
+            Log.LogInfo($"Scene loaded: {scene.name} ({mode})");
         }
 
     }
