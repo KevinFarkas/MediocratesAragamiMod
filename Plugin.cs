@@ -1,144 +1,57 @@
 ﻿using BepInEx;
-using BepInEx.Unity.IL2CPP;
-using UnityEngine;
-using UnityEngine.SceneManagement;
 using BepInEx.Logging;
-using System;
+using BepInEx.Unity.IL2CPP;
 using HarmonyLib;
-using UnityEngine.Video;
-using Il2CppInterop.Runtime;
-using UnityEngine.Events;
-using static Il2CppSystem.DateTimeParse;
-using DS = Il2CppInterop.Runtime.DelegateSupport;
-using LinceWorks;
-using Il2CppInterop.Runtime.Injection;
-using TriangleNet;
-using Il2CppSystem.Collections;
-using System.Linq;
+using System.Reflection;
 
-namespace CratesAragamiMod
+namespace Aragami2.SkipIntro
 {
-    [BepInPlugin(MyPluginInfo.PLUGIN_GUID, MyPluginInfo.PLUGIN_NAME, MyPluginInfo.PLUGIN_VERSION)]
+    [BepInPlugin("com.yourname.aragami2.skipintro", "Skip Intro", "1.0.5")]
     public class Plugin : BasePlugin
     {
-        internal static new ManualLogSource Log;
-        private UnityAction<Scene, LoadSceneMode> _onLoaded;
+        internal static ManualLogSource Log;
 
         public override void Load()
         {
             Log = base.Log;
-            Log.LogInfo("CratesAragamiMod Started");
+            Log.LogInfo("SkipIntro loaded, patching TitleScreenCoroutine...");
 
-            // Register our tiny updater so AddComponent works in IL2CPP
-            ClassInjector.RegisterTypeInIl2Cpp<TitleScreenCleaner>();
-
-            _onLoaded = DS.ConvertDelegate<UnityAction<Scene, LoadSceneMode>>(
-          new Action<Scene, LoadSceneMode>(OnSceneLoaded));
-
-            SceneManager.add_sceneLoaded(_onLoaded);
-            Log.LogInfo("SkipIntro armed: will jump to CharacterSelect once GlobalScene is loaded.");
-
-        }
-        private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
-        {
-            if (scene.name != "GlobalScene") return;
-
-            // When GlobalScene shows up (after platform init), spawn cleaner.
-            var go = new GameObject("TitleScreenCleaner_GO");
-            UnityEngine.Object.DontDestroyOnLoad(go);
-            go.AddComponent(Il2CppType.Of<TitleScreenCleaner>());
-            Log.LogInfo("Queued TitleScreenCleaner.");
+            var harmony = new Harmony("com.yourname.aragami2.skipintro");
+            harmony.PatchAll();
         }
     }
 
-    public class TitleScreenCleaner : MonoBehaviour
+    [HarmonyPatch(typeof(LinceWorks.TitleScreenMenu._TitleScreenCoroutine_d__34), "MoveNext")]
+    public static class Patch_TitleScreenCoroutine
     {
-        // IL2CPP constructors
-        public TitleScreenCleaner(IntPtr handle) : base(handle) { }
-        public TitleScreenCleaner() : base(ClassInjector.DerivedConstructorPointer<TitleScreenCleaner>())
-        { ClassInjector.DerivedConstructorBody(this); }
-
-        private int frames;
-
-        // Names to remove from TitleScreen
-        private static readonly string[] KillNames =
+        static void Postfix(object __instance)
         {
-        "CanvasSplash", "CanvasSplash_02", "LinceLogo", "Trademark", "Trademark_LW",
-        "Trademark_Partners", "Background", "Logo", "Image_", "Image", "Visuals"
-    };
-
-        // Names to keep so the prompt/menu remains
-        private static readonly string[] KeepNames =
-        {
-        "UITitleScreen", "PromptContainer", "UIMenuFooter", "TextLabelVersion"
-    };
-
-        private bool ShouldKill(string name)
-            => KillNames.Any(k => name.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0)
-               && !KeepNames.Any(k => name.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0);
-
-        private bool ShouldKeep(string name)
-            => KeepNames.Any(k => name.IndexOf(k, StringComparison.OrdinalIgnoreCase) >= 0);
-
-        private void Update()
-        {
-            // Give TitleScreen a frame or two to finish instantiating under GlobalScene
-            if (++frames < 2) return;
-
-            var ts = SceneManager.GetSceneByName("TitleScreen");
-            if (!ts.IsValid() || !ts.isLoaded)
+            try
             {
-                // Try again next frame until it’s visible
-                if (frames < 120) return;
-                Destroy(gameObject);
-                return;
-            }
+                var type = __instance.GetType();
 
-            int killed = 0, kept = 0;
+                var getState = type.GetMethod("get___1__state", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                var getCurrent = type.GetMethod("get___2__current", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+                var setCurrent = type.GetMethod("set___2__current", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
 
-            foreach (var root in ts.GetRootGameObjects())
-            {
-                ProcessTree(root.transform, ref killed, ref kept);
-            }
+                if (getState == null || getCurrent == null || setCurrent == null)
+                    return;
 
-            DebugLog($"Cleaned TitleScreen. Hid={killed}, kept-specified={kept}. Press Enter prompt should now be visible.");
-            Destroy(gameObject);
-        }
+                int state = (int)getState.Invoke(__instance, null);
+                object current = getCurrent.Invoke(__instance, null);
 
-        private void ProcessTree(Transform t, ref int killed, ref int kept)
-        {
-            var go = t.gameObject;
-            var n = go.name;
-
-            if (go.activeSelf)
-            {
-                if (ShouldKill(n))
+                if (state >= 3 && current != null)
                 {
-                    go.SetActive(false);
-                    killed++;
-                    DebugLog($"Hid: {GetPath(t)}");
-                }
-                else if (ShouldKeep(n))
-                {
-                    // Ensure the prompt/menu bits are enabled
-                    if (!go.activeSelf) go.SetActive(true);
-                    kept++;
+                    Plugin.Log.LogInfo($"[SkipIntro] Forcing skip at state={state}, replacing yield {current.GetType().FullName} with null");
+                    setCurrent.Invoke(__instance, new object[] { null });
                 }
             }
-
-            for (int i = 0; i < t.childCount; i++)
-                ProcessTree(t.GetChild(i), ref killed, ref kept);
+            catch (System.Exception ex)
+            {
+                Plugin.Log.LogWarning($"[SkipIntro] Exception in coroutine skip patch: {ex}");
+            }
         }
-
-        private static string GetPath(Transform t)
-        {
-            string path = t.name;
-            while (t.parent != null) { t = t.parent; path = t.name + "/" + path; }
-            return path;
-        }
-
-        private static void DebugLog(string msg)
-            => BepInEx.Logging.Logger.CreateLogSource("Aragami SkipTitleFX").LogInfo(msg);
     }
+
 
 }
